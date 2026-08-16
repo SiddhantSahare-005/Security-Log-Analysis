@@ -1,5 +1,7 @@
+import os
 from pathlib import Path
 
+from dotenv import load_dotenv
 from flask import Flask, render_template, request, redirect, url_for
 
 from db import (
@@ -11,24 +13,29 @@ from db import (
 from detector import analyze_log_source
 
 
+# Load .env for local development.
+# On Vercel, DATABASE_URL comes from Environment Variables.
+load_dotenv()
+
+
 app = Flask(__name__)
 
 BASE_DIR = Path(__file__).resolve().parent
 
-# Vercel's filesystem is read-only except for /tmp.
-# Uploaded files are therefore stored temporarily there.
-if "VERCEL" in __import__("os").environ:
+# Vercel has a temporary writable /tmp directory.
+# Locally, uploaded files are stored in logs/uploads/.
+if os.getenv("VERCEL"):
     UPLOAD_DIR = Path("/tmp/security_log_uploads")
 else:
     UPLOAD_DIR = BASE_DIR / "logs" / "uploads"
 
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
-# Maximum uploaded file size: 5 MB
+# Maximum uploaded log size: 5 MB
 app.config["MAX_CONTENT_LENGTH"] = 5 * 1024 * 1024
 
 
-# Initialize the database when the Flask application starts.
+# Initialize PostgreSQL table/indexes.
 init_db()
 
 
@@ -49,7 +56,6 @@ def dashboard():
         per_page=per_page
     )
 
-    # Prevent invalid page numbers
     if page > total_pages:
         page = total_pages
 
@@ -72,14 +78,9 @@ def dashboard():
 def upload_logs():
 
     uploaded = request.files.get("log_file")
-
-    pasted = request.form.get(
-        "log_text",
-        ""
-    ).strip()
+    pasted = request.form.get("log_text", "").strip()
 
     if not uploaded and not pasted:
-
         return redirect(
             url_for(
                 "dashboard",
@@ -89,19 +90,14 @@ def upload_logs():
 
     try:
 
-        # -------------------------------------------------
+        # -----------------------------
         # Uploaded file
-        # -------------------------------------------------
+        # -----------------------------
 
         if uploaded and uploaded.filename:
 
-            filename = Path(
-                uploaded.filename
-            ).name
-
-            extension = Path(
-                filename
-            ).suffix.lower()
+            filename = Path(uploaded.filename).name
+            extension = Path(filename).suffix.lower()
 
             allowed_extensions = {
                 ".log",
@@ -111,7 +107,6 @@ def upload_logs():
             }
 
             if extension not in allowed_extensions:
-
                 return redirect(
                     url_for(
                         "dashboard",
@@ -122,7 +117,6 @@ def upload_logs():
                     )
                 )
 
-            # Avoid unsafe filenames
             timestamp = __import__(
                 "datetime"
             ).datetime.now().strftime(
@@ -133,15 +127,11 @@ def upload_logs():
                 f"upload_{timestamp}{extension}"
             )
 
-            destination = (
-                UPLOAD_DIR / safe_name
-            )
+            destination = UPLOAD_DIR / safe_name
 
             uploaded.save(destination)
 
-            result = analyze_log_source(
-                destination
-            )
+            result = analyze_log_source(destination)
 
             message = (
                 f"Analyzed {result['logs']} log entries "
@@ -149,9 +139,9 @@ def upload_logs():
                 f"new security alerts."
             )
 
-        # -------------------------------------------------
+        # -----------------------------
         # Pasted log data
-        # -------------------------------------------------
+        # -----------------------------
 
         else:
 
@@ -171,9 +161,7 @@ def upload_logs():
                 encoding="utf-8"
             )
 
-            result = analyze_log_source(
-                destination
-            )
+            result = analyze_log_source(destination)
 
             message = (
                 f"Analyzed {result['logs']} pasted "
@@ -183,9 +171,7 @@ def upload_logs():
 
     except Exception as exc:
 
-        message = (
-            f"Log analysis failed: {exc}"
-        )
+        message = f"Log analysis failed: {exc}"
 
     return redirect(
         url_for(
@@ -220,11 +206,9 @@ def scan():
         )
 
     except OSError:
-
         files = []
 
     if not files:
-
         return redirect(
             url_for(
                 "dashboard",
@@ -237,9 +221,7 @@ def scan():
 
     try:
 
-        result = analyze_log_source(
-            files[0]
-        )
+        result = analyze_log_source(files[0])
 
         message = (
             f"Security scan completed. "
@@ -250,9 +232,7 @@ def scan():
 
     except Exception as exc:
 
-        message = (
-            f"Security scan failed: {exc}"
-        )
+        message = f"Security scan failed: {exc}"
 
     return redirect(
         url_for(
@@ -268,14 +248,11 @@ def clear():
     try:
 
         clear_alerts()
-
         message = "All security alerts cleared."
 
     except Exception as exc:
 
-        message = (
-            f"Unable to clear alerts: {exc}"
-        )
+        message = f"Unable to clear alerts: {exc}"
 
     return redirect(
         url_for(
@@ -304,19 +281,6 @@ def page_not_found(_error):
 
     return redirect(
         url_for("dashboard")
-    )
-
-
-@app.errorhandler(500)
-def internal_error(_error):
-
-    return redirect(
-        url_for(
-            "dashboard",
-            message=(
-                "An internal application error occurred."
-            ),
-        )
     )
 
 
